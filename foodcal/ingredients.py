@@ -12,9 +12,12 @@ def parse_and_combine(all_ingredients):
     for raw in all_ingredients:
         try:
             result = parse_ingredient(raw)
-            name = _extract_name(result)
+            names = result.name if isinstance(result.name, list) else [result.name]
             qty, unit = _extract_amount(result)
-            parsed.append({"name": name, "qty": qty, "unit": unit, "raw": raw})
+            for name_obj in names:
+                name = name_obj.text.strip() if hasattr(name_obj, "text") else ""
+                if name:
+                    parsed.append({"name": name, "qty": qty, "unit": unit, "raw": raw})
         except Exception:
             parsed.append({"name": raw, "qty": None, "unit": None, "raw": raw})
 
@@ -108,8 +111,8 @@ def _combine_duplicates(parsed_items):
         unit_groups = defaultdict(list)
         no_unit = []
         for item in items:
-            if item["unit"]:
-                unit_groups[_normalize_unit(item["unit"])].append(item)
+            if item["unit"] is not None:
+                unit_groups[_normalize_unit(item["unit"]) if item["unit"] else ""].append(item)
             else:
                 no_unit.append(item)
 
@@ -124,11 +127,16 @@ def _combine_duplicates(parsed_items):
                     break
 
             if can_sum and total_qty > 0:
+                unit_str = unit_items[0]["unit"]
+                raw_parts = [_format_qty(total_qty)]
+                if unit_str:
+                    raw_parts.append(unit_str)
+                raw_parts.append(unit_items[0]["name"])
                 combined.append({
                     "name": unit_items[0]["name"],
                     "qty": total_qty,
-                    "unit": unit_items[0]["unit"],
-                    "raw": f"{_format_qty(total_qty)} {unit_items[0]['unit']} {unit_items[0]['name']}",
+                    "unit": unit_str,
+                    "raw": " ".join(raw_parts),
                 })
             else:
                 combined.extend(unit_items)
@@ -162,9 +170,13 @@ def _categorize(combined_items):
 def _format_item(item):
     """Format a combined item for display."""
     parts = []
-    if item["qty"] is not None:
-        parts.append(_format_qty(item["qty"]))
-    if item["unit"]:
-        parts.append(item["unit"])
+    qty = item["qty"]
+    unit = item["unit"]
+    if qty is not None:
+        parts.append(_format_qty(qty))
+    if unit:
+        if qty is not None and qty > 1 and not unit.endswith("s"):
+            unit = unit + "s"
+        parts.append(unit)
     parts.append(item["name"])
     return " ".join(parts)

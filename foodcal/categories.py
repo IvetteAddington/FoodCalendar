@@ -101,6 +101,8 @@ CATEGORY_KEYWORDS = {
 }
 
 
+import re
+
 # Categories to check first (more specific matches before broad ones)
 _PRIORITY_ORDER = [
     "Spices & Seasonings", "Condiments & Sauces", "Eggs", "Frozen",
@@ -108,12 +110,21 @@ _PRIORITY_ORDER = [
     "Pantry & Dry Goods", "Produce",
 ]
 
+# Pre-sorted: longest keywords first (more specific wins), tie-broken by priority order.
+# This ensures "olive oil" in Pantry beats "olive" in Condiments.
+_SORTED_KEYWORDS = sorted(
+    [
+        (keyword, category, _PRIORITY_ORDER.index(category))
+        for category, keywords in CATEGORY_KEYWORDS.items()
+        for keyword in keywords
+    ],
+    key=lambda x: (-len(x[0]), x[2]),
+)
 
-import re
 
 def _word_match(keyword, text):
-    """Check if keyword appears as a whole word (not as part of another word)."""
-    pattern = r'\b' + re.escape(keyword) + r'\b'
+    """Check if keyword (singular or common plural) appears as a whole word."""
+    pattern = r"\b" + re.escape(keyword) + r"(?:e?s)?\b"
     return re.search(pattern, text) is not None
 
 
@@ -122,9 +133,7 @@ def categorize_ingredient(ingredient_name):
     # Skip plain water — you don't need to buy it
     if name_lower == "water":
         return "Skip"
-    for category in _PRIORITY_ORDER:
-        keywords = CATEGORY_KEYWORDS.get(category, [])
-        for keyword in keywords:
-            if _word_match(keyword, name_lower):
-                return category
+    for keyword, category, _ in _SORTED_KEYWORDS:
+        if _word_match(keyword, name_lower):
+            return category
     return "Other"
