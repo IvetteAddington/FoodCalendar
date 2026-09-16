@@ -4,10 +4,16 @@ from fractions import Fraction
 from ingredient_parser import parse_ingredient
 
 from .categories import categorize_ingredient
+from .pantry import split_staples
 
 
 def parse_and_combine(all_ingredients):
-    """Parse a flat list of ingredient strings, combine duplicates, and categorize."""
+    """Parse ingredient strings, combine duplicates, drop pantry staples, categorize.
+
+    Returns (categorized, skipped_staples) where `categorized` maps
+    category -> list of {"display": "3/4 cup Parmesan cheese", "name": "Parmesan cheese"}.
+    The "display" form is for the terminal; the bare "name" is what goes to Reminders.
+    """
     parsed = []
     for raw in all_ingredients:
         try:
@@ -21,9 +27,10 @@ def parse_and_combine(all_ingredients):
         except Exception:
             parsed.append({"name": raw, "qty": None, "unit": None, "raw": raw})
 
-    combined = _combine_duplicates(parsed)
+    to_buy, skipped = split_staples(parsed)
+    combined = _combine_duplicates(to_buy)
     categorized = _categorize(combined)
-    return categorized
+    return categorized, skipped
 
 
 def _extract_name(result):
@@ -146,29 +153,65 @@ def _combine_duplicates(parsed_items):
     return combined
 
 
+# Decimal amounts that read better as fractions on a recipe.
+_FRACTION_DISPLAY = {
+    0.125: "1/8", 0.25: "1/4", 0.333: "1/3", 0.33: "1/3",
+    0.375: "3/8", 0.5: "1/2", 0.625: "5/8", 0.666: "2/3",
+    0.67: "2/3", 0.75: "3/4", 0.875: "7/8",
+}
+
+
 def _format_qty(qty):
-    """Format quantity nicely (remove trailing .0)."""
+    """Format quantity as a readable fraction where possible (0.75 -> 3/4)."""
     if qty is None:
         return ""
     if qty == int(qty):
         return str(int(qty))
+
+    whole = int(qty)
+    remainder = round(qty - whole, 3)
+
+    for value, text in _FRACTION_DISPLAY.items():
+        if abs(remainder - value) < 0.01:
+            return f"{whole} {text}" if whole else text
+
+    # Fall back to a tidy fraction, then to a decimal.
+    frac = Fraction(qty).limit_denominator(8)
+    if abs(float(frac) - qty) < 0.01:
+        if frac.numerator > frac.denominator:
+            whole, num = divmod(frac.numerator, frac.denominator)
+            return f"{whole} {num}/{frac.denominator}" if num else str(whole)
+        return f"{frac.numerator}/{frac.denominator}"
+
     return f"{qty:.2f}".rstrip("0").rstrip(".")
 
 
 def _categorize(combined_items):
-    """Group combined items by grocery category."""
+    """Group combined items by grocery category.
+
+    Each entry carries both a detailed "display" string (for the terminal) and a
+    bare "name" (for Apple Reminders, where quantities just add noise).
+    """
     categorized = defaultdict(list)
+    seen = defaultdict(set)
     for item in combined_items:
         category = categorize_ingredient(item["name"])
         if category == "Skip":
             continue
-        display = _format_item(item)
-        categorized[category].append(display)
+        name = item["name"].strip()
+        # Don't list the same ingredient name twice in one category.
+        if name.lower() in seen[category]:
+            continue
+        seen[category].add(name.lower())
+        categorized[category].append({
+            "display": _format_item(item),
+            "name": name,
+        })
     return dict(categorized)
 
 
 def _format_item(item):
-    """Format a combined item for display."""
+    """Format a combined item for terminal display, with quantity and unit."""
     parts = []
     qty = item["qty"]
     unit = item["unit"]

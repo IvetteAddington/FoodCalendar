@@ -6,12 +6,21 @@ REMINDERS_LIST = "Grocery List"
 
 
 def send_to_reminders(categorized_items):
-    """Send categorized shopping list items to Apple Reminders."""
-    # Collect all items with category prefix
+    """Send shopping list items to Apple Reminders.
+
+    Items are sent as plain ingredient names (no quantities, no category tags) —
+    easiest to scan while pushing a cart. Category order still controls the
+    sequence, so the list roughly follows the layout of the store.
+    """
     all_items = []
+    seen = set()
     for category, items in sorted(categorized_items.items()):
         for item in items:
-            all_items.append(f"[{category}] {item}")
+            name = item["name"] if isinstance(item, dict) else str(item)
+            if name.lower() in seen:
+                continue
+            seen.add(name.lower())
+            all_items.append(name)
 
     if not all_items:
         print("No items to send to Reminders.")
