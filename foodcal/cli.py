@@ -1,10 +1,14 @@
 import argparse
+import json
+import os
+import subprocess
 import sys
+import tempfile
 
-from .storage import DAYS, load_plan, save_plan, clear_plan, week_start_for
+from .storage import DAYS, PLANS_DIR, load_plan, save_plan, clear_plan, week_start_for
 from .scraper import scrape_recipe, manual_entry
 from .photo import extract_recipe_from_photo
-from .ingredients import parse_and_combine
+from .ingredients import parse_and_combine, find_unclear_ingredients
 from .reminders import send_to_reminders
 from . import style
 
@@ -39,6 +43,40 @@ def _week_label(week_of):
     return f"week of {week_of}"
 
 
+def _week_flag(week_of):
+    """The --week flag needed to target this week again, or "" if it's the default.
+
+    Suggested commands have to carry the week you're actually looking at —
+    otherwise following the hint silently jumps you back to the current week.
+    """
+    if week_of == week_start_for():
+        return ""
+    if week_of == week_start_for("next"):
+        return " --week next"
+    return f" --week {week_of}"
+
+
+def _warn_unclear(recipe, day, week_of):
+    """Point out ingredient lines that didn't parse into a real food.
+
+    Recipe sites sometimes drop the food word ("1 small red, quartered" meaning
+    a red onion). Flagging it here, while the recipe is still in front of you,
+    beats finding "1 red" on the shopping list days later.
+    """
+    unclear = find_unclear_ingredients(recipe["ingredients"])
+    if not unclear:
+        return
+
+    print()
+    print(style.warn(f"{len(unclear)} ingredient(s) didn't parse cleanly:"))
+    for raw, got in unclear:
+        got_note = f"read as '{got}'" if got else "couldn't read it"
+        print(f"      {raw}")
+        print(style.dim(f"        → {got_note}"))
+    flag = _week_flag(week_of)
+    print(style.dim(f"  Fix them with:  foodcal edit --day {day[:3]}{flag}"))
+
+
 def cmd_add(args):
     """Add a recipe from a URL to a specific day."""
     day = _resolve_day(args.day)
@@ -59,7 +97,8 @@ def cmd_add(args):
 
     plan["recipes"][day] = recipe
     save_plan(plan)
-    print(f"\nAdded '{recipe['title']}' to {day.capitalize()} ({_week_label(week_of)}).")
+    print(f"\n{style.success(recipe['title'])} added to {day.capitalize()} ({_week_label(week_of)}).")
+    _warn_unclear(recipe, day, week_of)
 
 
 def cmd_add_photo(args):
@@ -82,7 +121,8 @@ def cmd_add_photo(args):
 
     plan["recipes"][day] = recipe
     save_plan(plan)
-    print(f"\nAdded '{recipe['title']}' to {day.capitalize()} ({_week_label(week_of)}).")
+    print(f"\n{style.success(recipe['title'])} added to {day.capitalize()} ({_week_label(week_of)}).")
+    _warn_unclear(recipe, day, week_of)
 
 
 def cmd_add_manual(args):
@@ -104,7 +144,60 @@ def cmd_add_manual(args):
 
     plan["recipes"][day] = recipe
     save_plan(plan)
-    print(f"\nAdded '{recipe['title']}' to {day.capitalize()} ({_week_label(week_of)}).")
+    print(f"\n{style.success(recipe['title'])} added to {day.capitalize()} ({_week_label(week_of)}).")
+    _warn_unclear(recipe, day, week_of)
+
+
+def cmd_edit(args):
+    """Open a recipe's ingredients in your editor to correct them."""
+    day = _resolve_day(args.day)
+    week_of = _resolve_week(args)
+    plan = load_plan(week_of)
+
+    recipe = plan["recipes"][day]
+    if recipe is None:
+        print(style.warn(f"Nothing planned for {day.capitalize()} ({_week_label(week_of)})."))
+        return
+
+    header = [
+        f"# {recipe['title']} — {day.capitalize()}",
+        "#",
+        "# One ingredient per line. Edit freely, then save and close.",
+        "# Lines starting with # are ignored. Delete a line to drop that ingredient.",
+        "",
+    ]
+    body = "\n".join(header + recipe["ingredients"]) + "\n"
+
+    editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "nano"
+    with tempfile.NamedTemporaryFile("w+", suffix=".txt", delete=False) as tmp:
+        tmp.write(body)
+        tmp_path = tmp.name
+
+    try:
+        subprocess.run([editor, tmp_path], check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print(style.warn(f"Couldn't open editor '{editor}'. Set $EDITOR and try again."))
+        os.unlink(tmp_path)
+        return
+
+    with open(tmp_path) as f:
+        edited = [
+            line.strip() for line in f
+            if line.strip() and not line.strip().startswith("#")
+        ]
+    os.unlink(tmp_path)
+
+    if not edited:
+        print(style.warn("No ingredients left — nothing saved."))
+        return
+
+    before = len(recipe["ingredients"])
+    recipe["ingredients"] = edited
+    save_plan(plan)
+
+    print(f"\n{style.success('Updated ' + recipe['title'])}"
+          f" — {before} → {len(edited)} ingredients.")
+    _warn_unclear(recipe, day, week_of)
 
 
 def cmd_quick(args):
@@ -168,10 +261,10 @@ def cmd_plan(args):
 
     print()
     if filled == 0:
-        print(style.dim("  Nothing planned yet. Add a recipe:"))
-        print(style.dim("    foodcal add <url> --day monday"))
+        _suggest_other_weeks(week_of)
     else:
-        print(style.dim(f"  {filled} of 7 days planned.  Build the list:  foodcal list"))
+        flag = _week_flag(week_of)
+        print(style.dim(f"  {filled} of 7 days planned.  Build the list:  foodcal list{flag}"))
     print()
 
 
@@ -205,8 +298,8 @@ def cmd_list(args):
             recipe_count += 1
 
     if not all_ingredients:
-        print(style.warn("No recipes in your plan yet."))
-        print(style.dim("  Add one:  foodcal add <url> --day monday"))
+        print(style.warn(f"Nothing planned for {_week_label(week_of)}."))
+        _suggest_other_weeks(week_of)
         return
 
     print(style.dim(f"\nBuilding list from {recipe_count} recipe(s) — {_week_label(week_of)}..."))
@@ -232,6 +325,43 @@ def cmd_list(args):
     send_to_reminders(categorized)
 
 
+def _suggest_other_weeks(current_week):
+    """Point at weeks that do have recipes, so an empty week isn't a dead end.
+
+    Easy to add to next week and then run a bare `foodcal list`, which defaults
+    to this week — without this, that looks like the recipes vanished.
+    """
+    other = []
+    for path in sorted(PLANS_DIR.glob("plan_*.json")) if PLANS_DIR.exists() else []:
+        week = path.stem.replace("plan_", "")
+        if week == current_week:
+            continue
+        try:
+            with open(path) as f:
+                saved = json.load(f)
+        except (OSError, ValueError):
+            continue
+        count = sum(1 for r in saved.get("recipes", {}).values() if r)
+        if count:
+            other.append((week, count))
+
+    if not other:
+        print(style.dim("  Add one:  foodcal add <url> --day mon"))
+        return
+
+    print(style.dim("\n  You do have recipes in other weeks:"))
+    this_week = week_start_for()
+    for week, count in other:
+        if week == week_start_for("next"):
+            flag = "--week next"
+        elif week == this_week:
+            flag = "(no flag needed)"
+        else:
+            flag = f"--week {week}"
+        plural = "recipe" if count == 1 else "recipes"
+        print(style.dim(f"      week of {week}: {count} {plural}   →   foodcal list {flag}"))
+
+
 def _print_skipped(skipped):
     """Show which pantry staples were left off, in case any need restocking."""
     if not skipped:
@@ -251,15 +381,16 @@ def cmd_ingredients(args):
     recipes_found = [(day, plan["recipes"][day]) for day in DAYS if plan["recipes"][day]]
 
     if not recipes_found:
-        print("No recipes in your plan yet. Add some with 'foodcal add' or 'foodcal add-photo'.")
+        print(style.warn(f"Nothing planned for {_week_label(week_of)}."))
+        _suggest_other_weeks(week_of)
         return
 
-    print(f"\nIngredients for {_week_label(week_of)}:\n")
+    print(style.header(f"Ingredients — {_week_label(week_of)}"))
     for day, recipe in recipes_found:
-        print(f"  {recipe['title']}")
+        print(f"\n  {style.bold(recipe['title'])} {style.dim(day.capitalize())}")
         for ingredient in recipe["ingredients"]:
-            print(f"    - {ingredient}")
-        print()
+            print(f"      {ingredient}")
+    print()
 
 
 def cmd_clear(args):
@@ -308,6 +439,12 @@ def main():
     manual_parser.add_argument("--day", required=True, help="Day of the week — full or short (monday, mon, tue)")
     _add_week_arg(manual_parser)
     manual_parser.set_defaults(func=cmd_add_manual)
+
+    # edit
+    edit_parser = subparsers.add_parser("edit", help="Fix a recipe's ingredients in your editor")
+    edit_parser.add_argument("--day", required=True, help="Day whose recipe to edit (monday, mon)")
+    _add_week_arg(edit_parser)
+    edit_parser.set_defaults(func=cmd_edit)
 
     # quick
     quick_parser = subparsers.add_parser("quick", help="Plan the whole week in one pass")

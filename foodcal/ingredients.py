@@ -33,6 +33,50 @@ def parse_and_combine(all_ingredients):
     return categorized, skipped
 
 
+# Words that describe a food but never name one. If parsing leaves only these,
+# the source line was probably malformed — e.g. "1 small red, quartered"
+# (the recipe meant a red onion but never said "onion").
+_NOT_A_FOOD = {
+    "red", "green", "white", "yellow", "orange", "purple", "black", "brown",
+    "large", "small", "medium", "extra", "whole", "half", "fresh", "dried",
+    "chopped", "sliced", "diced", "minced", "grated", "shredded", "ground",
+    "hot", "cold", "warm", "cooked", "raw", "ripe", "firm", "soft", "thin",
+    "thick", "plain", "sweet", "mild", "optional", "taste", "needed", "more",
+}
+
+
+def find_unclear_ingredients(raw_ingredients):
+    """Return [(raw_line, parsed_name)] for lines the parser couldn't resolve.
+
+    Catches recipe lines missing the actual food word, so they can be corrected
+    at entry time rather than turning up as nonsense on the shopping list.
+    """
+    unclear = []
+    for raw in raw_ingredients:
+        try:
+            result = parse_ingredient(raw)
+            names = result.name if isinstance(result.name, list) else [result.name]
+            texts = [
+                n.text.strip() for n in names
+                if n is not None and hasattr(n, "text") and n.text.strip()
+            ]
+        except Exception:
+            unclear.append((raw, ""))
+            continue
+
+        if not texts:
+            unclear.append((raw, ""))
+            continue
+
+        for text in texts:
+            words = [w for w in text.lower().replace(",", " ").split() if w]
+            # Every word is a descriptor, so no actual ingredient was identified.
+            if words and all(w in _NOT_A_FOOD for w in words):
+                unclear.append((raw, text))
+
+    return unclear
+
+
 def _extract_name(result):
     if result.name:
         names = result.name if isinstance(result.name, list) else [result.name]

@@ -45,12 +45,44 @@ foodcal ingredients   # every ingredient, grouped by recipe
 foodcal list
 ```
 
+**Fix a recipe that scraped badly:**
+
+```bash
+foodcal edit --day mon
+```
+
+Opens that day's ingredients in your editor (`$EDITOR`, or nano). One per line —
+correct them, save, close. Deleting a line drops that ingredient.
+
 **Change your mind:**
 
 ```bash
 foodcal remove --day wed   # clear one day
 foodcal clear              # clear the whole week
 ```
+
+---
+
+## When a recipe doesn't parse cleanly
+
+Recipe sites sometimes drop the actual food word. A real example:
+
+```
+1 small red, quartered (or ½ a large onion)
+```
+
+That means a red onion, but "onion" never appears in the line, so the parser
+only sees "red". You'll get told right after adding the recipe:
+
+```
+! 1 ingredient(s) didn't parse cleanly:
+      1 small red, quartered (or ½ a large onion)
+        → read as 'red'
+  Fix them with:  foodcal edit --day mon
+```
+
+Run that, change the line to `1 small red onion, quartered`, and it lands in
+Produce where it belongs.
 
 ---
 

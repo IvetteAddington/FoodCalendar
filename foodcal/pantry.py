@@ -16,7 +16,8 @@ PANTRY_STAPLES = {
         "oregano", "basil", "thyme", "rosemary", "sage", "marjoram",
         "tarragon", "dill weed", "bay leaf", "parsley flakes",
         "cumin", "coriander", "chili powder", "cayenne", "red pepper flake",
-        "crushed red pepper", "turmeric", "curry powder", "garam masala",
+        "crushed red pepper", "chili flake", "chile flake", "pepper flake",
+        "turmeric", "curry powder", "garam masala",
         "cinnamon", "nutmeg", "allspice", "clove", "cardamom", "ginger powder",
         "ground ginger", "italian seasoning", "herbs de provence", "old bay",
         "mustard powder", "dry mustard", "celery seed", "fennel seed",
@@ -91,7 +92,12 @@ def is_pantry_staple(name, raw_text=""):
     if not base:
         return None
 
+    # Try as written, then singular ("chili flakes" -> "chili flake").
     group = _STAPLE_LOOKUP.get(base)
+    if group is None and base.endswith("es"):
+        group = _STAPLE_LOOKUP.get(base[:-2])
+    if group is None and base.endswith("s"):
+        group = _STAPLE_LOOKUP.get(base[:-1])
     if group is None:
         return None
 
