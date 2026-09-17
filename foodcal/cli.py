@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 from .storage import DAYS, PLANS_DIR, load_plan, save_plan, clear_plan, week_start_for
 from .scraper import scrape_recipe, manual_entry
@@ -146,6 +147,24 @@ def cmd_add_manual(args):
     save_plan(plan)
     print(f"\n{style.success(recipe['title'])} added to {day.capitalize()} ({_week_label(week_of)}).")
     _warn_unclear(recipe, day, week_of)
+
+
+def cmd_page(args):
+    """Write the week's meals out as an HTML page."""
+    week_of = _resolve_week(args)
+    plan = load_plan(week_of)
+    if not any(plan["recipes"][d] for d in DAYS):
+        print(style.warn(f"Nothing planned for {_week_label(week_of)}."))
+        _suggest_other_weeks(week_of)
+        return
+
+    from .page import build_page
+
+    out = args.out or str(Path.home() / f".foodcal/week-{week_of}.html")
+    Path(out).write_text(build_page(week_of))
+    print(f"\n{style.success('Page written')} → {out}")
+    print(style.dim("  Open it:      open " + out))
+    print(style.dim("  Publish it:   ask Claude to publish this file as an artifact"))
 
 
 def cmd_edit(args):
@@ -439,6 +458,12 @@ def main():
     manual_parser.add_argument("--day", required=True, help="Day of the week — full or short (monday, mon, tue)")
     _add_week_arg(manual_parser)
     manual_parser.set_defaults(func=cmd_add_manual)
+
+    # page
+    page_parser = subparsers.add_parser("page", help="Build an HTML page of the week's meals")
+    page_parser.add_argument("--out", default=None, help="Where to write the file")
+    _add_week_arg(page_parser)
+    page_parser.set_defaults(func=cmd_page)
 
     # edit
     edit_parser = subparsers.add_parser("edit", help="Fix a recipe's ingredients in your editor")
