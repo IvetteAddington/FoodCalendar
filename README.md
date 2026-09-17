@@ -45,6 +45,19 @@ foodcal ingredients   # every ingredient, grouped by recipe
 foodcal list
 ```
 
+**Build a phone-friendly page of the week** (ingredients, method, and the
+grocery list, meant to be read one-handed in the kitchen):
+
+```bash
+foodcal page --week next
+```
+
+Writes an HTML file to `~/.foodcal/`. Today's card highlights itself, and
+ingredients/groceries are tappable checkboxes that remember their state.
+Ask Claude to publish it as an artifact for a private, bookmarkable link —
+republishing the same file path updates the link in place rather than making
+a new one.
+
 **Fix a recipe that scraped badly:**
 
 ```bash
